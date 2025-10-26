@@ -1,6 +1,6 @@
 // ===== LaUneTV Chat Server =====
 // Node.js + Socket.io
-// v1.2 - Compatible Render, WordPress & Ultimate Member (roles)
+// v2.0 — Historique + Modération + Persistance mémoire courte
 
 import express from "express";
 import { createServer } from "http";
@@ -42,9 +42,11 @@ app.get("/", (req, res) => {
   res.send("✅ LaUneTV Chat Server is running.");
 });
 
-// === Gestion des utilisateurs ===
+// === Données en mémoire ===
 let users = {}; // { socket.id: { username, role } }
+let messages = []; // Historique des 50 derniers messages
 
+// === Connexion d’un client ===
 io.on("connection", (socket) => {
   console.log("🔌 Nouveau client connecté :", socket.id);
 
@@ -52,23 +54,38 @@ io.on("connection", (socket) => {
   socket.on("join", ({ username, role }) => {
     users[socket.id] = { username, role };
     console.log(`👤 ${username} (${role}) connecté.`);
-    io.emit("userList", Object.values(users));
-    io.emit("message", {
+
+    // Envoie l’historique des 50 derniers messages
+    socket.emit("messageHistory", messages);
+
+    // Annonce dans le chat
+    const joinMsg = {
       username: "Système",
       text: `${username} a rejoint le chat.`,
-      type: "system"
-    });
+      type: "system",
+      time: Date.now()
+    };
+    io.emit("message", joinMsg);
   });
 
   // === Message standard ===
   socket.on("message", (text) => {
     const user = users[socket.id];
     if (!user) return;
-    console.log(`💬 ${user.username}: ${text}`);
-    io.emit("message", { username: user.username, text, type: "user" });
+
+    const msg = {
+      username: user.username,
+      text,
+      type: "user",
+      time: Date.now()
+    };
+
+    messages.push(msg);
+    if (messages.length > 50) messages.shift(); // garde 50 derniers
+    io.emit("message", msg);
   });
 
-  // === Modération : kick d’un utilisateur ===
+  // === Modération : kick ===
   socket.on("kickUser", (target) => {
     const kicker = users[socket.id];
     if (kicker?.role !== "um_admin" && kicker?.role !== "um_modo") return;
@@ -81,12 +98,15 @@ io.on("connection", (socket) => {
       io.sockets.sockets.get(targetId)?.disconnect(true);
       delete users[targetId];
       console.log(`🚨 ${target} a été exclu par ${kicker.username}`);
-      io.emit("userList", Object.values(users));
-      io.emit("message", {
+
+      const msg = {
         username: "Système",
         text: `${target} a été exclu du chat.`,
-        type: "system"
-      });
+        type: "system",
+        time: Date.now()
+      };
+      io.emit("message", msg);
+      io.emit("userList", Object.values(users));
     }
   });
 
@@ -95,18 +115,20 @@ io.on("connection", (socket) => {
     const user = users[socket.id];
     if (user) {
       console.log(`❌ ${user.username} s’est déconnecté`);
-      io.emit("message", {
+      const msg = {
         username: "Système",
         text: `${user.username} a quitté le chat.`,
-        type: "system"
-      });
+        type: "system",
+        time: Date.now()
+      };
+      io.emit("message", msg);
       delete users[socket.id];
       io.emit("userList", Object.values(users));
     }
   });
 });
 
-// === Démarrage du serveur ===
+// === Lancement du serveur ===
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
   console.log(`🚀 Chat Server LaUneTV lancé sur le port ${PORT}`);
