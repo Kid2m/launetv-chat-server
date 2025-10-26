@@ -1,6 +1,6 @@
 // ===== LaUneTV Chat Server =====
 // Node.js + Socket.io
-// v2.0 — Historique + Modération + Persistance mémoire courte
+// v3.0 — Historique + Modération (kick + delete) + Persistance mémoire courte
 
 import express from "express";
 import { createServer } from "http";
@@ -33,9 +33,7 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // === Serveur Socket.io ===
-const io = new Server(server, {
-  cors: corsOptions
-});
+const io = new Server(server, { cors: corsOptions });
 
 // === Endpoint test Render ===
 app.get("/", (req, res) => {
@@ -44,21 +42,21 @@ app.get("/", (req, res) => {
 
 // === Données en mémoire ===
 let users = {}; // { socket.id: { username, role } }
-let messages = []; // Historique des 50 derniers messages
+let messages = []; // Historique (max 50 derniers)
 
 // === Connexion d’un client ===
 io.on("connection", (socket) => {
   console.log("🔌 Nouveau client connecté :", socket.id);
 
-  // === User rejoint le chat ===
+  // === Join ===
   socket.on("join", ({ username, role }) => {
     users[socket.id] = { username, role };
     console.log(`👤 ${username} (${role}) connecté.`);
 
-    // Envoie l’historique des 50 derniers messages
+    // Envoi de l'historique
     socket.emit("messageHistory", messages);
 
-    // Annonce dans le chat
+    // Message système (arrivée)
     const joinMsg = {
       username: "Système",
       text: `${username} a rejoint le chat.`,
@@ -68,7 +66,7 @@ io.on("connection", (socket) => {
     io.emit("message", joinMsg);
   });
 
-  // === Message standard ===
+  // === Envoi d’un message standard ===
   socket.on("message", (text) => {
     const user = users[socket.id];
     if (!user) return;
@@ -82,17 +80,19 @@ io.on("connection", (socket) => {
 
     messages.push(msg);
     if (messages.length > 50) messages.shift(); // garde 50 derniers
+
     io.emit("message", msg);
   });
 
   // === Modération : kick ===
   socket.on("kickUser", (target) => {
     const kicker = users[socket.id];
-    if (kicker?.role !== "um_admin" && kicker?.role !== "um_modo") return;
+    if (kicker?.role !== "administrator" && kicker?.role !== "um_modo") return;
 
     const targetId = Object.keys(users).find(
       (id) => users[id].username === target
     );
+
     if (targetId) {
       io.to(targetId).emit("kicked");
       io.sockets.sockets.get(targetId)?.disconnect(true);
@@ -107,6 +107,19 @@ io.on("connection", (socket) => {
       };
       io.emit("message", msg);
       io.emit("userList", Object.values(users));
+    }
+  });
+
+  // === Modération : suppression d’un message ===
+  socket.on("deleteMessage", (msgId) => {
+    const admin = users[socket.id];
+    if (!admin || (admin.role !== "administrator" && admin.role !== "um_modo")) return;
+
+    const index = messages.findIndex((m) => m.time == msgId);
+    if (index !== -1) {
+      messages.splice(index, 1);
+      io.emit("messageDeleted", msgId);
+      console.log(`🗑️ Message ${msgId} supprimé par ${admin.username}`);
     }
   });
 
