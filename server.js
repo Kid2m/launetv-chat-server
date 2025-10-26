@@ -1,6 +1,6 @@
 // ===== LaUneTV Chat Server =====
 // Node.js + Socket.io
-// v3.0 — Historique + Modération (kick + delete) + Persistance mémoire courte
+// v3.1 — Historique + Modération (kick + delete) + Persistance mémoire courte + compatibilité Ultimate Member
 
 import express from "express";
 import { createServer } from "http";
@@ -87,7 +87,15 @@ io.on("connection", (socket) => {
   // === Modération : kick ===
   socket.on("kickUser", (target) => {
     const kicker = users[socket.id];
-    if (kicker?.role !== "administrator" && kicker?.role !== "um_modo") return;
+    if (!kicker) return;
+
+    // ✅ Détection multi-rôles (Ultimate Member compatible)
+    const roleStr = Array.isArray(kicker.role)
+      ? kicker.role.join(",")
+      : kicker.role.toString();
+    const isAdmin = roleStr.includes("administrator");
+    const isModo = roleStr.includes("um_modo");
+    if (!isAdmin && !isModo) return;
 
     const targetId = Object.keys(users).find(
       (id) => users[id].username === target
@@ -113,7 +121,15 @@ io.on("connection", (socket) => {
   // === Modération : suppression d’un message ===
   socket.on("deleteMessage", (msgId) => {
     const admin = users[socket.id];
-    if (!admin || (admin.role !== "administrator" && admin.role !== "um_modo")) return;
+    if (!admin) return;
+
+    // ✅ Détection multi-rôles (Ultimate Member compatible)
+    const roleStr = Array.isArray(admin.role)
+      ? admin.role.join(",")
+      : admin.role.toString();
+    const isAdmin = roleStr.includes("administrator");
+    const isModo = roleStr.includes("um_modo");
+    if (!isAdmin && !isModo) return;
 
     const index = messages.findIndex((m) => m.time == msgId);
     if (index !== -1) {
