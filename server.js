@@ -1,75 +1,88 @@
+// ===== LaUneTV Chat Server =====
+// Node.js + Socket.io
+// v1.0 - Compatible Render & WordPress Front
+
 import express from "express";
-import http from "http";
-import { WebSocketServer } from "ws";
+import { createServer } from "http";
+import { Server } from "socket.io";
 import cors from "cors";
 
 const app = express();
+const server = createServer(app);
+
+const io = new Server(server, {
+  cors: {
+    origin: "*", // à sécuriser plus tard avec ton domaine
+    methods: ["GET", "POST"]
+  }
+});
+
 app.use(cors());
-app.get("/", (_, res) => res.send("✅ LaUneTV Chat Server is running"));
+app.get("/", (req, res) => {
+  res.send("✅ LaUneTV Chat Server is running.");
+});
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server });
+// === Gestion des utilisateurs ===
+let users = {}; // { socket.id: { username, role } }
 
-// --- Utilisateurs bannis ---
-const bannedUsers = new Set();
+io.on("connection", (socket) => {
+  console.log("🔌 Nouveau client connecté :", socket.id);
 
-// --- Diffuser à tous les clients ---
-function broadcast(data) {
-  const json = JSON.stringify(data);
-  wss.clients.forEach(client => {
-    if (client.readyState === client.OPEN) client.send(json);
+  // Nouveau user
+  socket.on("join", ({ username, role }) => {
+    users[socket.id] = { username, role };
+    io.emit("userList", Object.values(users));
+    io.emit("message", {
+      username: "Système",
+      text: `${username} a rejoint le chat.`,
+      type: "system"
+    });
   });
-}
 
-// --- Quand un utilisateur se connecte ---
-wss.on("connection", (ws) => {
-  console.log("🔗 Client connecté");
-  
-  ws.on("message", (msg) => {
-    try {
-      const data = JSON.parse(msg);
+  // Message classique
+  socket.on("message", (text) => {
+    const user = users[socket.id];
+    if (!user) return;
+    io.emit("message", { username: user.username, text, type: "user" });
+  });
 
-      // Sécurité basique
-      if (!data.user || !data.text) return;
-
-      // Si utilisateur banni
-      if (bannedUsers.has(data.userId)) {
-        ws.send(JSON.stringify({ system: true, text: "⛔ Vous êtes suspendu du chat." }));
-        return;
-      }
-
-      // Commandes admin/modo
-      if (data.text.startsWith("/ban") && data.role === "administrator") {
-        const userId = Number(data.text.split(" ")[1]);
-        bannedUsers.add(userId);
-        broadcast({ system: true, text: `🚫 L'utilisateur #${userId} a été banni.` });
-        return;
-      }
-
-      if (data.text.startsWith("/delete") && ["administrator","moderator"].includes(data.role)) {
-        const messageId = data.text.split(" ")[1];
-        broadcast({ action: "delete", id: messageId });
-        return;
-      }
-
-      // Message normal
-      const messageData = {
-        id: Date.now(),
-        userId: data.userId,
-        user: data.user,
-        role: data.role,
-        text: data.text,
-        time: new Date().toISOString()
-      };
-
-      broadcast(messageData);
-    } catch (err) {
-      console.error("❌ Erreur message:", err);
+  // Modération : suppression d’un user
+  socket.on("kickUser", (target) => {
+    const kicker = users[socket.id];
+    if (kicker?.role !== "admin" && kicker?.role !== "moderator") return;
+    const targetId = Object.keys(users).find(
+      (id) => users[id].username === target
+    );
+    if (targetId) {
+      io.to(targetId).emit("kicked");
+      io.sockets.sockets.get(targetId)?.disconnect(true);
+      delete users[targetId];
+      io.emit("userList", Object.values(users));
+      io.emit("message", {
+        username: "Système",
+        text: `${target} a été exclu du chat.`,
+        type: "system"
+      });
     }
   });
 
-  ws.on("close", () => console.log("❌ Client déconnecté"));
+  // Déconnexion
+  socket.on("disconnect", () => {
+    const user = users[socket.id];
+    if (user) {
+      io.emit("message", {
+        username: "Système",
+        text: `${user.username} a quitté le chat.`,
+        type: "system"
+      });
+      delete users[socket.id];
+      io.emit("userList", Object.values(users));
+    }
+  });
 });
 
+// === Démarrage du serveur ===
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () => console.log(`🚀 LaUneTV Chat Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`🚀 Chat Server LaUneTV lancé sur le port ${PORT}`);
+});
