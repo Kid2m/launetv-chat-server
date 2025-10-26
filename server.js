@@ -1,7 +1,6 @@
-// =============================
-// 🎥 LaUneTV Chat Server — v2.0
-// Compatible Render & WordPress (Ultimate Member)
-// =============================
+// ===== LaUneTV Chat Server =====
+// Node.js + Socket.io
+// v1.2 - Compatible Render, WordPress & Ultimate Member (roles)
 
 import express from "express";
 import { createServer } from "http";
@@ -11,42 +10,49 @@ import cors from "cors";
 const app = express();
 const server = createServer(app);
 
-app.use(cors({
-  origin: "*", // à sécuriser plus tard : ["https://launetv.fr"]
-  methods: ["GET", "POST"]
-}));
+// === CORS sécurisé ===
+const allowedOrigins = [
+  "https://launetv.fr",
+  "https://www.launetv.fr",
+  "http://localhost:3000"
+];
 
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn("❌ CORS refusé pour :", origin);
+      callback(new Error("Not allowed by CORS"));
+    }
+  },
+  methods: ["GET", "POST"],
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+
+// === Serveur Socket.io ===
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: corsOptions
 });
 
+// === Endpoint test Render ===
 app.get("/", (req, res) => {
-  res.send("✅ Serveur de chat LaUneTV en ligne !");
+  res.send("✅ LaUneTV Chat Server is running.");
 });
 
 // === Gestion des utilisateurs ===
 let users = {}; // { socket.id: { username, role } }
 
-// === Vérifie si un rôle est modérateur ou admin
-const isModerator = (role) => {
-  return role === "um_admin" || role === "um_modo";
-};
-
-// === Événements WebSocket ===
 io.on("connection", (socket) => {
   console.log("🔌 Nouveau client connecté :", socket.id);
 
-  // === Lorsqu’un utilisateur rejoint
+  // === User rejoint le chat ===
   socket.on("join", ({ username, role }) => {
-    // Rôle par défaut si non défini
-    const cleanRole = role || "um_membre";
-
-    users[socket.id] = { username, role: cleanRole };
+    users[socket.id] = { username, role };
+    console.log(`👤 ${username} (${role}) connecté.`);
     io.emit("userList", Object.values(users));
-
     io.emit("message", {
       username: "Système",
       text: `${username} a rejoint le chat.`,
@@ -54,51 +60,41 @@ io.on("connection", (socket) => {
     });
   });
 
-  // === Lorsqu’un message est envoyé
+  // === Message standard ===
   socket.on("message", (text) => {
     const user = users[socket.id];
     if (!user) return;
-
-    io.emit("message", {
-      username: user.username,
-      role: user.role,
-      text,
-      type: "user"
-    });
+    console.log(`💬 ${user.username}: ${text}`);
+    io.emit("message", { username: user.username, text, type: "user" });
   });
 
-  // === Modération : exclusion d’un utilisateur
-  socket.on("kickUser", (targetUsername) => {
+  // === Modération : kick d’un utilisateur ===
+  socket.on("kickUser", (target) => {
     const kicker = users[socket.id];
-    if (!kicker || !isModerator(kicker.role)) {
-      console.warn(`⛔ Action refusée : ${kicker?.username || "Inconnu"} (${kicker?.role})`);
-      return;
-    }
+    if (kicker?.role !== "um_admin" && kicker?.role !== "um_modo") return;
 
     const targetId = Object.keys(users).find(
-      (id) => users[id].username === targetUsername
+      (id) => users[id].username === target
     );
-
     if (targetId) {
       io.to(targetId).emit("kicked");
       io.sockets.sockets.get(targetId)?.disconnect(true);
       delete users[targetId];
+      console.log(`🚨 ${target} a été exclu par ${kicker.username}`);
       io.emit("userList", Object.values(users));
-
       io.emit("message", {
         username: "Système",
-        text: `${targetUsername} a été exclu du chat par ${kicker.username}.`,
+        text: `${target} a été exclu du chat.`,
         type: "system"
       });
-
-      console.log(`🗑️ ${targetUsername} kické par ${kicker.username}`);
     }
   });
 
-  // === Déconnexion
+  // === Déconnexion ===
   socket.on("disconnect", () => {
     const user = users[socket.id];
     if (user) {
+      console.log(`❌ ${user.username} s’est déconnecté`);
       io.emit("message", {
         username: "Système",
         text: `${user.username} a quitté le chat.`,
@@ -110,8 +106,8 @@ io.on("connection", (socket) => {
   });
 });
 
-// === Lancement du serveur ===
+// === Démarrage du serveur ===
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, () => {
-  console.log(`🚀 Serveur LaUneTV lancé sur le port ${PORT}`);
+  console.log(`🚀 Chat Server LaUneTV lancé sur le port ${PORT}`);
 });
